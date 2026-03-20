@@ -33,8 +33,8 @@ import os, datetime
 fd = '/usr/share/fonts/truetype/dejavu/'
 pdfmetrics.registerFont(TTFont('DejaVu', fd+'DejaVuSans.ttf'))
 pdfmetrics.registerFont(TTFont('DejaVuBold', fd+'DejaVuSans-Bold.ttf'))
-pdfmetrics.registerFont(TTFont('DejaVuOblique', fd+'DejaVuSans-Oblique.ttf'))
-pdfmetrics.registerFont(TTFont('DejaVuBoldOblique', fd+'DejaVuSans-BoldOblique.ttf'))
+pdfmetrics.registerFont(TTFont('DejaVuOblique', fd+'DejaVuSans.ttf'))
+pdfmetrics.registerFont(TTFont('DejaVuBoldOblique', fd+'DejaVuSans-Bold.ttf'))
 
 GREEN = HexColor('#81C784')
 GREEN_DARK = HexColor('#388E3C')
