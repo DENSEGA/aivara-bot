@@ -1,7 +1,7 @@
 {
   "name": "aivara-bot",
-  "version": "3.1.0",
-  "description": "AIVARA Telegram Bot v2 — финансы, ChatGPT, дневник, команда, конфигуратор",
+  "version": "3.3.0",
+  "description": "AIVARA Telegram Bot v3.3 — конфигуратор домов, финансы, ChatGPT, команда",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
