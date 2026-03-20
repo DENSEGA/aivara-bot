@@ -1,5 +1,0 @@
-[build]
-buildCommand = "pip install reportlab && npm install"
-
-[deploy]
-startCommand = "node src/index.js"
