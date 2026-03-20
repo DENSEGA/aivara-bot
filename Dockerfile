@@ -1,6 +1,6 @@
 FROM node:20-slim
 
-RUN apt-get update && apt-get install -y python3 python3-pip fonts-dejavu && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y python3 python3-pip fonts-dejavu-core fonts-dejavu-extra && rm -rf /var/lib/apt/lists/*
 RUN pip3 install reportlab --break-system-packages
 
 WORKDIR /app
