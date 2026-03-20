@@ -5,6 +5,7 @@ const { setupFinanceModule, handleCallback: finCb, handleMessage: finMsg, handle
 const { setupChatGPTModule, handleMessage: gptMsg, handleVoice: gptVoice } = require('./modules/chatgpt');
 const { setupDiaryModule, handleCallback: diaryCb, handleMessage: diaryMsg } = require('./modules/diary');
 const { setupTasksModule, handleCallback: taskCb, handleMessage: taskMsg } = require('./modules/tasks');
+const { setupConfigModule, handleCallback: cfgCb, handleMessage: cfgMsg } = require('./modules/config');
 const { setupReminders } = require('./services/reminders');
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
@@ -31,21 +32,20 @@ function getMainMenu(chatId) {
   const rows = [];
 
   if (hasAccess(chatId, 'finance')) {
-    rows.push(['💰 Финансы', '🤖 ChatGPT']);
+    rows.push(['💰 Финансы', '🏠 Смета']);
+    rows.push(['🤖 ChatGPT', '📓 Дневник']);
   } else {
     rows.push(['🤖 ChatGPT']);
   }
 
-  if (hasAccess(chatId, 'diary')) {
-    rows.push(['📓 Дневник', '👥 Задачи']);
-  } else if (hasAccess(chatId, 'tasks')) {
+  if (hasAccess(chatId, 'tasks')) {
     rows.push(['👥 Задачи']);
   }
 
   if (hasAccess(chatId, 'settings')) {
-    rows.push(['⚙️ Настройки', '🏠 Меню']);
+    rows.push(['⚙️ Настройки', '🔄 Меню']);
   } else {
-    rows.push(['🏠 Меню']);
+    rows.push(['🔄 Меню']);
   }
 
   return Markup.keyboard(rows).resize();
@@ -57,6 +57,7 @@ const WELCOME = (name, role) => {
     `Привет, ${name}!\n` +
     `Роль: ${roleNames[role] || role}\n\n` +
     `💰 *Финансы* — расходы и отчёты\n` +
+    `🏠 *Смета* — конфигуратор дома + PDF\n` +
     `🤖 *ChatGPT* — AI-ассистент (текст + голос)\n` +
     `📓 *Дневник* — записи и напоминания\n` +
     `👥 *Задачи* — управление командой\n\n` +
@@ -72,7 +73,7 @@ bot.command('start', (ctx) => {
   });
 });
 
-bot.hears('🏠 Меню', (ctx) => {
+bot.hears('🔄 Меню', (ctx) => {
   ctx.session.mode = null;
   return ctx.reply('Выбери модуль 👇', getMainMenu(ctx.from.id));
 });
@@ -82,6 +83,7 @@ setupFinanceModule(bot);
 setupChatGPTModule(bot);
 setupDiaryModule(bot);
 setupTasksModule(bot);
+setupConfigModule(bot);
 
 // Контент — заглушка
 bot.hears('📋 Контент', (ctx) => {
@@ -135,6 +137,7 @@ bot.on('callback_query', async (ctx) => {
   if (data.startsWith('fin_')) return finCb(ctx);
   if (data.startsWith('diary_')) return diaryCb(ctx);
   if (data.startsWith('task_')) return taskCb(ctx);
+  if (data.startsWith('cfg_')) return cfgCb(ctx);
 });
 
 // === ТЕКСТОВЫЕ СООБЩЕНИЯ ===
@@ -144,6 +147,7 @@ function handleTextMessage(ctx) {
   if (mode === 'diary') return diaryMsg(ctx);
   if (mode === 'finance') return finMsg(ctx);
   if (mode === 'tasks') return taskMsg(ctx);
+  if (mode === 'config') return cfgMsg(ctx);
   return ctx.reply('Выбери модуль из меню 👇', getMainMenu(ctx.from.id));
 }
 
