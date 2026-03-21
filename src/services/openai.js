@@ -30,18 +30,16 @@ function downloadFile(url) {
   return new Promise((resolve, reject) => {
     const proto = url.startsWith('https') ? https : require('http');
 
-    proto
-      .get(url, (res) => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          return downloadFile(res.headers.location).then(resolve).catch(reject);
-        }
+    proto.get(url, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        return downloadFile(res.headers.location).then(resolve).catch(reject);
+      }
 
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve(Buffer.concat(chunks)));
-        res.on('error', reject);
-      })
-      .on('error', reject);
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', reject);
+    }).on('error', reject);
   });
 }
 
@@ -56,25 +54,25 @@ async function transcribeVoice(fileBuffer) {
 }
 
 // ============================================================
-// v4.1 WORKING
-// Короткие рабочие промты с усилением реализма
+// v4.2 WORKING FINAL
+// Короткие промты + усиленный контроль этажности
 // ============================================================
 
 const STYLE = {
   'Барнхаус':
-    'dark charcoal vertical corrugated metal siding walls, warm brown horizontal wood plank accent panels around each window and door, thin black window frames, dark metal gable roof, dark gray foundation, small warm LED wall lights',
+    'dark charcoal vertical corrugated metal siding walls, warm brown horizontal wood plank accent panels around windows and entrance, thin black window frames, dark gray foundation, small warm LED wall lights, minimalist modern barnhouse appearance',
 
   'Скандинавский':
-    'white vertical board-and-batten wood cladding walls, dark brown wood trim on fascia and gable edges, large panoramic floor-to-ceiling windows with thin black frames, dark composite terrace, restrained Scandinavian look',
+    'white vertical board-and-batten wood cladding walls, dark brown wood trim on fascia and gable edges, large panoramic windows with thin black frames, restrained Scandinavian look, clean cozy proportions',
 
   'Классический':
-    'smooth white stucco render walls, warm brown wood fascia boards and eave trim, dark charcoal metal tile roof, dark-framed windows, warm LED wall lights, gray concrete foundation',
+    'smooth white stucco render walls, warm brown wood fascia boards and eave trim, dark charcoal roof, dark-framed windows, warm LED wall lights, gray concrete foundation, balanced family house appearance',
 
   'Современный':
-    'white brick-pattern facade tiles, dark-stained wood beam columns supporting roof overhang, large panoramic windows with black frames, dark composite terrace, LED wall lights, clean modern lines',
+    'white brick-pattern facade tiles or light facade, dark-stained wood beam columns supporting roof overhang, large panoramic windows with black frames, clean modern lines, restrained premium look',
 
   'A-frame':
-    'dramatic A-frame triangular house shape, steep roof planes from ground forming walls and roof as one surface, dark charcoal corrugated metal roof, full-height triangular glass front facade with dark mullions, dark wood side walls, wide wood deck platform with steps'
+    'dramatic A-frame triangular house shape, steep roof planes from ground forming walls and roof as one surface, full-height triangular glass front facade with dark mullions, dark wood side walls, wide wood deck platform with steps'
 };
 
 const ROOF = {
@@ -115,14 +113,49 @@ const FACADE = {
 };
 
 const FLOORS = {
-  '1':
-    'STRICTLY single-story ONE floor ONLY, low elongated horizontal rectangular shape, walls about 2.7m high, roof directly above ground floor, NO second floor, NO attic windows, NO upper-level windows, house is WIDE and LOW',
+  '1': `
+STRICTLY ONE STORY HOUSE ONLY.
+EXACTLY ONE GROUND FLOOR.
 
-  '1.5':
-    'one-and-a-half story with mansard attic, ground floor plus habitable attic under roof, taller than single-story but lower than full two-story house, attic glazing allowed',
+ABSOLUTE RULES:
+no second floor,
+no upper level,
+no attic,
+no mansard,
+no dormers,
+no balcony,
+no second row of windows,
+no windows above ground floor,
+no tall facade,
+no vertical two-story proportions.
 
-  '2':
-    'full two-story house, compact near-square plan, two complete floors with windows on both levels, clear visible second floor, total wall height about 5.2m'
+ARCHITECTURE:
+low horizontal bungalow proportions,
+elongated rectangular shape,
+roof sits directly on top of ground floor walls,
+house is visually wide and low.
+
+If the house has more than one floor, the image is incorrect.
+`,
+
+  '1.5': `
+ONE-AND-A-HALF STORY HOUSE.
+GROUND FLOOR PLUS HABITABLE ATTIC UNDER ROOF.
+
+RULES:
+attic level must be smaller than main floor,
+possible attic glazing,
+taller than one-story house,
+lower than full two-story house.
+`,
+
+  '2': `
+STRICTLY FULL TWO-STORY HOUSE.
+TWO COMPLETE FLOORS.
+CLEAR SECOND FLOOR WINDOWS.
+FULL HEIGHT SECOND LEVEL.
+NO SINGLE-STORY INTERPRETATION.
+`
 };
 
 function getSizeText(area, floors) {
@@ -133,12 +166,12 @@ function getSizeText(area, floors) {
 
   if (floors === '1.5') {
     const s = Math.max(8, Math.round(Math.sqrt(area * 0.65)));
-    return `${s}x${s}m footprint with mansard attic`;
+    return `${s}x${s}m footprint with habitable attic under roof`;
   }
 
-  const w = Math.max(9, Math.round(Math.sqrt(area) * 1.2));
+  const w = Math.max(10, Math.round(Math.sqrt(area) * 1.3));
   const d = Math.max(6, Math.round(area / w));
-  return `elongated ${w}x${d}m footprint, single floor`;
+  return `elongated ${w}x${d}m footprint, clearly horizontal single-story house, wide and low proportions`;
 }
 
 function getWindowsText(params, floorsKey) {
@@ -152,9 +185,13 @@ function getWindowsText(params, floorsKey) {
   }
 
   let extra = '';
-  if (floorsKey === '1') extra = 'all windows on ground floor only';
-  if (floorsKey === '2') extra = 'windows on both floors';
-  if (floorsKey === '1.5') extra = 'main windows on ground floor with possible attic glazing';
+  if (floorsKey === '1') {
+    extra = 'ALL windows strictly on ground floor only, NO second row of windows anywhere';
+  } else if (floorsKey === '2') {
+    extra = 'windows clearly placed on both floors';
+  } else {
+    extra = 'main windows on ground floor with possible smaller attic glazing';
+  }
 
   return `${wCount} realistic windows with ${frames}, natural reflections of trees and sky, ${extra}`;
 }
@@ -191,7 +228,7 @@ function getTerraceText(params) {
 }
 
 function getLandscapeText() {
-  return 'real landscaped plot, green lawn with slight natural unevenness, pine and birch trees in background, ornamental shrubs, stone paver walkway, believable suburban environment';
+  return 'real landscaped plot, natural lawn with slight unevenness, pine and birch trees in background, ornamental shrubs, stone paver walkway, believable suburban environment';
 }
 
 function getLightText() {
@@ -214,10 +251,33 @@ function getQualityText() {
   return 'ultra photorealistic real-world exterior photo, real built house, DSLR photo look, realistic materials, natural imperfections, no people, no text, no watermarks, no cartoon, no fake CGI look, high detail';
 }
 
+function getSpecialCase(params, floorsKey) {
+  const key = `${floorsKey}|${params.style}|${params.roofMaterial}|${params.roofType}`;
+
+  const map = {
+    '1|Барнхаус|Профнастил|Двускатная':
+      'single-story low elongated barnhouse, clearly one level only, no attic feeling, dark metal roof, dark vertical metal facade with warm wood accents',
+
+    '1|Барнхаус|Фальц|Двускатная':
+      'single-story premium barnhouse, clearly one level only, long low rectangular body, standing seam metal roof, no second floor, no upper glazing',
+
+    '1|Барнхаус|Металлочерепица|Двускатная':
+      'single-story barnhouse-inspired house, low wide proportions, clearly one level, practical rural modern appearance',
+
+    '1|Современный|Профнастил|Односкатная':
+      'single-story modern house with mono-pitch roof, low wide silhouette, one level only',
+
+    '2|Классический|Металлочерепица|Вальмовая':
+      'full two-story classical family house with hip roof, clearly visible second floor'
+  };
+
+  return map[key] || '';
+}
+
 function buildHousePrompt(params, view) {
   const area = parseFloat(params.area) || 90;
-  const style = STYLE[params.style] || STYLE['Барнхаус'];
   const floorsKey = params.floors || '1';
+  const style = STYLE[params.style] || STYLE['Барнхаус'];
   const floors = FLOORS[floorsKey] || FLOORS['1'];
   const roof = ROOF[params.roofType] || ROOF['Двускатная'];
   const roofMat = ROOF_MAT[params.roofMaterial] || ROOF_MAT['Профнастил'];
@@ -227,6 +287,7 @@ function buildHousePrompt(params, view) {
   const door = getDoorText(params);
   const terrace = getTerraceText(params);
   const camera = getCameraText(view, floorsKey);
+  const special = getSpecialCase(params, floorsKey);
 
   if (params.houseType === 'module') {
     const n = params.modulesCount || 1;
@@ -267,6 +328,7 @@ function buildHousePrompt(params, view) {
 
   const parts = [
     'Photorealistic exterior photo of a real built timber-frame house',
+    special,
     floors,
     size,
     style,
@@ -294,11 +356,11 @@ async function generateHouseRenders(params) {
   const frontPrompt = buildHousePrompt(params, 'front');
   const backPrompt = buildHousePrompt(params, 'back');
 
-  console.log('=== DALL-E v4.1 FRONT ===');
+  console.log('=== DALL-E v4.2 FRONT ===');
   console.log(frontPrompt);
   console.log(`Length: ${frontPrompt.length} chars`);
 
-  console.log('=== DALL-E v4.1 BACK ===');
+  console.log('=== DALL-E v4.2 BACK ===');
   console.log(backPrompt);
   console.log(`Length: ${backPrompt.length} chars`);
 
