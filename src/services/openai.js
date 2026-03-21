@@ -1,173 +1,485 @@
 const OpenAI = require('openai');
 const https = require('https');
-
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-async function chat(messages) {
-  const r = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages, max_tokens: 2000, temperature: 0.7 });
-  return r.choices[0].message.content;
-}
-
 async function generateImage(prompt) {
-  const r = await openai.images.generate({ model: 'dall-e-3', prompt, n: 1, size: '1792x1024' });
+  const r = await openai.images.generate({
+    model: 'dall-e-3',
+    prompt,
+    n: 1,
+    size: '1792x1024'
+  });
   return r.data[0].url;
 }
 
-function downloadFile(url) {
-  return new Promise((resolve, reject) => {
-    const proto = url.startsWith('https') ? https : require('http');
-    proto.get(url, (res) => {
-      if (res.statusCode === 301 || res.statusCode === 302) return downloadFile(res.headers.location).then(resolve).catch(reject);
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-      res.on('error', reject);
-    }).on('error', reject);
-  });
+function safeStr(v) {
+  return typeof v === 'string' ? v.trim() : '';
 }
 
-async function transcribeVoice(fileBuffer) {
-  const file = new File([fileBuffer], 'voice.ogg', { type: 'audio/ogg' });
-  const r = await openai.audio.transcriptions.create({ model: 'whisper-1', file, language: 'ru' });
-  return r.text;
-}
+function normalizeParams(params = {}) {
+  const normalized = {
+    area: Number(params.area) > 0 ? Number(params.area) : 90,
+    floors: ['1', '1.5', '2'].includes(String(params.floors)) ? String(params.floors) : '1',
+    style: safeStr(params.style) || 'Барнхаус',
+    roofType: safeStr(params.roofType) || 'Двускатная',
+    roofMaterial: safeStr(params.roofMaterial) || 'Профнастил',
+    facade: safeStr(params.facade) || 'Комбинированный',
+    windowsCount: Number(params.windowsCount) > 0 ? Number(params.windowsCount) : 8,
+    windows: safeStr(params.windows),
+    door: safeStr(params.door),
+    terrace: !!params.terrace,
+    terraceArea: Number(params.terraceArea) > 0 ? Number(params.terraceArea) : 0,
+    terraceType: safeStr(params.terraceType) || 'открытая',
+    terraceRailing: Number(params.terraceRailing) > 0 ? Number(params.terraceRailing) : 0,
+    terraceSteps: !!params.terraceSteps,
+    houseType: safeStr(params.houseType) || 'house',
+    modulesCount: Number(params.modulesCount) > 0 ? Number(params.modulesCount) : 1
+  };
 
-// ============================================================
-// v4.0 РЕНДЕРЫ — переписаны по 20 реальным рендерам ЭкоКаркас
-// Принцип: КОРОТКИЕ промты, ПРОСТАЯ форма, ЖЁСТКИЙ контроль этажности
-// ============================================================
-
-// По IMG_7417+7416: тёмный вертикальный профлист, дерево вокруг окон, прямоугольник
-const STYLE = {
-  'Барнхаус': 'dark charcoal vertical corrugated metal siding walls, warm brown horizontal wood plank accent panels around each window and door, thin black window frames, dark metal gable roof, dark gray foundation, small LED wall lights',
-  // По IMG_7405+7404: белая вертикальная доска, панорамные окна, длинная терраса
-  'Скандинавский': 'white vertical board-and-batten wood cladding walls, dark brown wood trim on fascia and gable edges, large panoramic floor-to-ceiling windows with thin black frames, dark composite deck terrace along front, LED path bollard lights',
-  // По IMG_7415+7414+7408: белая штукатурка, тёплые коричневые карнизы, металлочерепица
-  'Классический': 'smooth white stucco render walls, warm brown wood fascia boards and eave trim, dark charcoal metal tile roof, dark-framed windows, LED wall sconce lights, gray concrete foundation',
-  // По IMG_7403+7402: белая кирпичная плитка, односкатная, деревянные столбы
-  'Современный': 'white brick-pattern facade tiles, dark-stained wood beam columns supporting roof overhang, large panoramic windows with black frames, dark metal chimney pipe, dark composite deck, LED wall lights',
-  // По IMG_7407+7406: треугольник, стеклянный фронтон, тёмный металл, деревянная площадка
-  'A-frame': 'dramatic A-frame triangular shape, steep roof planes from ground forming walls and roof as one surface, dark charcoal corrugated metal roof, full-height triangular glass front facade with dark metal mullions, dark wood vertical plank side walls, wide wood deck platform with steps',
-};
-
-// Крыша — коротко
-const ROOF = {
-  'Двускатная': 'symmetrical gable roof, steep pitch, dark overhanging eaves',
-  'Односкатная': 'modern mono-pitch shed roof sloping from high front to low rear, extended front overhang with exposed wood beam columns',
-  'Вальмовая': 'four-sided hip roof, all sides slope inward, wide eaves all around',
-  'Плоская': 'flat roof with sharp horizontal roofline, dark metal edge trim, modern cubic look',
-};
-
-// Материал крыши — коротко
-const ROOF_MAT = {
-  'Профнастил': 'dark charcoal corrugated metal sheet roofing',
-  'Металлочерепица': 'dark charcoal metal tile roofing with wave profile',
-  'Мягкая кровля': 'dark charcoal architectural bitumen shingles',
-};
-
-// Фасад — коротко, по рендерам
-const FACADE = {
-  'Металлический сайдинг / софиты': 'dark charcoal vertical corrugated metal siding, metal soffit under eaves',
-  'Имитация бруса': 'warm honey-brown horizontal wood plank cladding, visible tongue-and-groove joints',
-  'Штукатурка (мокрый фасад)': 'smooth white stucco render, dark trim at base and corners',
-  'Фасадная плитка Hauberk': 'gray brick-pattern bitumen facade tiles, white painted corner boards and window surrounds',
-  'Комбинация: металл + дерево': 'dark charcoal vertical corrugated metal on main walls, warm brown horizontal wood accent panels around windows and entrance',
-  'Комбинация: металл + штукатурка': 'white stucco main walls, dark charcoal metal accent strips at corners and around windows',
-};
-
-// Этажность — ЖЁСТКИЙ контроль, это ключевое
-const FLOORS = {
-  '1': 'STRICTLY single-story ONE floor ONLY, low elongated horizontal rectangular shape, walls 2.7m high, roof directly above ground floor, NO second floor, NO attic windows, house is WIDE and LOW',
-  '1.5': 'one-and-a-half story with mansard attic, ground floor plus habitable attic under roof, MUST have triangular decorative window in gable end wall, possible small dormer windows in roof slope, taller than single-story but shorter than full two-story',
-  '2': 'full two-story house, compact near-square plan, two complete floors with windows on both levels, dark horizontal trim strip separating floors, second floor balcony with metal railing, total height about 5.2m walls',
-};
-
-// ============================================================
-// Главная функция — КОРОТКИЙ промт
-// ============================================================
-function buildHousePrompt(params, view) {
-  const area = parseFloat(params.area) || 90;
-  const style = STYLE[params.style] || STYLE['Барнхаус'];
-  const floors = FLOORS[params.floors] || FLOORS['1'];
-  const roof = ROOF[params.roofType] || ROOF['Двускатная'];
-  const roofMat = ROOF_MAT[params.roofMaterial] || ROOF_MAT['Профнастил'];
-  const facade = FACADE[params.facade] || '';
-  const wCount = parseInt(params.windowsCount) || 8;
-
-  // Размер
-  let size;
-  if (params.floors === '2') {
-    const s = Math.round(Math.sqrt(area / 2));
-    size = `compact ${s}x${s}m footprint, two full floors`;
-  } else if (params.floors === '1.5') {
-    const s = Math.round(Math.sqrt(area * 0.65));
-    size = `${s}x${s}m footprint with mansard attic`;
-  } else {
-    const w = Math.round(Math.sqrt(area) * 1.2);
-    const d = Math.round(area / w);
-    size = `elongated ${w}x${d}m footprint, single floor`;
-  }
-
-  // Окна
-  let win = `${wCount} windows`;
-  if (params.windows && params.windows.includes('ламинация')) win += ' with brown wood-grain laminated PVC frames';
-  else win += ' with white PVC frames';
-
-  // Дверь
-  let door = 'dark metal entrance door';
-  if (params.door && params.door.includes('пластик')) door = 'white PVC entrance door with glass panel';
-  else if (params.door && params.door.includes('премиум')) door = 'premium dark bronze metal entrance door';
-
-  // Терраса
-  let terrace = '';
-  if (params.terrace && parseFloat(params.terraceArea) > 0) {
-    const tA = parseFloat(params.terraceArea);
-    if (params.terraceType === 'открытая') {
-      terrace = `open wood deck terrace ${tA}sqm with dark composite decking`;
-      if (params.terraceRailing > 0) terrace += `, railing ${params.terraceRailing}m`;
-      if (params.terraceSteps) terrace += ', wood entrance steps';
-    } else {
-      terrace = `enclosed glass terrace ${tA}sqm with glass walls and roof`;
-      if (params.terraceSteps) terrace += ', entrance steps';
+  // Жёсткая коррекция конфликтов
+  if (normalized.floors === '1') {
+    if (normalized.style === 'A-frame') {
+      // A-frame почти всегда визуально воспринимается как двухуровневый,
+      // поэтому его лучше оставлять отдельным типом.
     }
   }
 
-  // Камера
-  const cam = view === 'front'
-    ? 'front three-quarter view from eye level, 20deg angle left showing front and side wall, full house in frame'
-    : 'rear three-quarter view from eye level, 20deg angle right showing back facade and side wall';
+  return normalized;
+}
 
-  // === МОДУЛЬ ===
-  if (params.houseType === 'module') {
-    const n = params.modulesCount || 1;
-    return `Photorealistic exterior photo of ${n} modular prefab timber cabin${n > 1 ? 's connected side by side' : ''}, flat or shallow mono-pitch metal roof, composite wood panel facade, dark accents, large windows, on screw pile foundation. ${size}. ${terrace ? terrace + '. ' : ''}Green lawn, pine trees background. ${cam}. Golden hour light. Archviz V-Ray quality, sharp textures, no people, no text, no CGI look, 8K.`;
+function getFootprint(area, floors) {
+  if (floors === '2') {
+    const side = Math.max(7, Math.round(Math.sqrt(area / 2)));
+    return {
+      width: side,
+      depth: side,
+      text: `compact footprint approximately ${side} by ${side} meters, two full floors of equal height`
+    };
   }
 
-  // === A-FRAME ===
-  if (params.style === 'A-frame') {
-    return `Photorealistic exterior photo of an A-frame cabin: ${STYLE['A-frame']}. ${roofMat}. ${size}. ${win}. ${door}. ${terrace ? terrace + '. ' : ''}On concrete foundation, green lawn, mixed trees background, ornamental shrubs. ${cam}. Golden hour warm light, LED wall lights on facade. Archviz V-Ray quality, no people, no text, no CGI, 8K.`;
+  if (floors === '1.5') {
+    const side = Math.max(8, Math.round(Math.sqrt(area * 0.68)));
+    return {
+      width: side,
+      depth: side,
+      text: `balanced footprint approximately ${side} by ${side} meters, one full floor plus attic level under roof`
+    };
   }
 
-  // === ОСНОВНОЙ ===
-  const parts = [
-    `Photorealistic exterior photo of a timber-frame house`,
-    floors,
-    size,
-    style,
-    facade ? `Facade: ${facade}` : '',
-    `Roof: ${roof}, ${roofMat}`,
-    `${win}. ${door}`,
-    terrace,
-    `On concrete strip foundation with gray base, green manicured lawn, pine and birch trees background, ornamental shrubs, stone paver walkway`,
-    cam,
-    `Golden hour warm evening light from left, warm LED wall sconce lights on facade, soft shadows on lawn`,
-    `Archviz V-Ray render quality, sharp material textures, no people, no text, no watermarks, no CGI artifacts, no cartoon, 8K resolution`,
-  ].filter(Boolean);
+  const width = Math.max(10, Math.round(Math.sqrt(area) * 1.25));
+  const depth = Math.max(6, Math.round(area / width));
+  return {
+    width,
+    depth,
+    text: `elongated single-story footprint approximately ${width} by ${depth} meters`
+  };
+}
 
-  let prompt = parts.join('. ') + '.';
+function getFloorRules(floors) {
+  if (floors === '2') {
+    return {
+      positive: `
+exactly two full floors, clearly visible ground floor and clearly visible second floor,
+second-floor windows aligned with real upper level, realistic wall height proportions,
+roof sits above the second floor, no attic-only interpretation
+`,
+      negative: `
+do not generate one-story house, do not generate bungalow,
+do not collapse second floor into attic, no misleading low upper facade
+`
+    };
+  }
 
-  // Обрезка до лимита DALL-E
-  if (prompt.length > 3800) prompt = prompt.substring(0, 3800) + '. 8K photorealistic archviz.';
+  if (floors === '1.5') {
+    return {
+      positive: `
+one-and-a-half-story house, one full ground floor plus жилой мансардный уровень under the roof,
+upper level must be visually smaller than ground floor,
+roof volume clearly contains attic floor, realistic mansard proportions
+`,
+      negative: `
+do not generate full two-story box house,
+do not generate plain single-story bungalow
+`
+    };
+  }
+
+  return {
+    positive: `
+exactly one single story only, bungalow proportions, low overall building height,
+roof begins directly above first-floor wall line,
+all windows belong only to the ground floor,
+no upper floor mass, no inhabited attic, no mansard level
+`,
+    negative: `
+strictly no second floor,
+strictly no half-story,
+strictly no attic windows,
+strictly no dormers,
+strictly no upper balcony,
+strictly no second-row windows,
+strictly no tall facade suggesting two levels
+`
+  };
+}
+
+function getStyleTemplate(style, floors) {
+  const map = {
+    'Барнхаус': `
+modern barnhouse architecture, simple elongated massing, clean gable silhouette,
+minimal decorative elements, practical proportions, Scandinavian-inspired rural house
+`,
+    'Скандинавский': `
+Scandinavian house architecture, restrained modern design, calm proportions,
+clean facade lines, cozy but minimal appearance, functional exterior
+`,
+    'Классический': `
+classic suburban residential architecture, more traditional window rhythm,
+balanced composition, calm family house character
+`,
+    'Современный': `
+modern contemporary country house, clean lines, large windows, restrained detailing,
+architect-designed but buildable in real life
+`,
+    'Шале': `
+modern chalet-inspired architecture, warm natural accents, expressive roof overhangs,
+cozy country-house character, realistic buildable structure
+`,
+    'A-frame': `
+A-frame cabin architecture, triangular roof-dominant form, compact alpine character
+`
+  };
+
+  let result = map[style] || map['Современный'];
+
+  if (style === 'Барнхаус' && floors === '1') {
+    result += `
+single-story barnhouse only, long low rectangular volume, no upper жилой level
+`;
+  }
+
+  if (style === 'Барнхаус' && floors === '2') {
+    result += `
+two-story barnhouse with clear second floor, not a warehouse, not an exaggerated tall shed
+`;
+  }
+
+  return result;
+}
+
+function getRoofTypeTemplate(roofType, floors) {
+  const map = {
+    'Двускатная': `
+gable roof with realistic pitch, correct ridge line, structurally believable proportions
+`,
+    'Односкатная': `
+single-slope shed roof with realistic load-bearing geometry, not futuristic,
+practical residential proportions
+`,
+    'Вальмовая': `
+hip roof with realistic eaves and residential proportions
+`,
+    'Плоская': `
+low-slope flat roof with hidden drainage and realistic parapet details
+`
+  };
+
+  let result = map[roofType] || map['Двускатная'];
+
+  if (floors === '1') {
+    result += `
+roof proportion must stay low enough to preserve clear single-story appearance
+`;
+  }
+
+  if (floors === '2') {
+    result += `
+roof must sit clearly above full second floor and not compress upper level
+`;
+  }
+
+  return result;
+}
+
+function getRoofMaterialTemplate(roofMaterial) {
+  const map = {
+    'Профнастил': `
+corrugated metal roofing with visible wave profile, matte industrial finish,
+subtle real reflections, slight manufacturing irregularity, realistic joints and overlap lines
+`,
+    'Металлочерепица': `
+metal tile roofing with believable tile profile, subtle sheen, realistic shadow pattern,
+visible repetition typical for real metal tile sheets
+`,
+    'Фальц': `
+standing seam metal roof, straight seam rhythm, premium restrained look,
+soft realistic reflections, not mirror-like
+`
+  };
+
+  return map[roofMaterial] || map['Профнастил'];
+}
+
+function getFacadeTemplate(facade, style) {
+  const map = {
+    'Штукатурка': `
+facade finished with exterior plaster or stucco, fine mineral texture,
+subtle unevenness, realistic corners, slight dirt near base and drainage areas
+`,
+    'Дерево': `
+natural wood facade, visible grain, color variation, slight weathering,
+real joints between boards, believable installation pattern
+`,
+    'Комбинированный': `
+combined facade using two materials such as plaster and wood, or metal and wood,
+well-designed contrast, realistic junctions, trim details, believable construction logic
+`,
+    'Кирпич': `
+brick or clinker facade with real masonry rhythm, subtle tone variation,
+natural mortar joints, realistic corner bonding
+`,
+    'Панели': `
+modern facade panels with realistic seams, restrained reflectivity,
+clear mounting rhythm, buildable system appearance
+`
+  };
+
+  let result = map[facade] || map['Комбинированный'];
+
+  if (style === 'Барнхаус') {
+    result += `
+facade should feel modern and minimal, without excessive classical decor
+`;
+  }
+
+  return result;
+}
+
+function getWindowsTemplate(params) {
+  const count = params.windowsCount || 8;
+  let frame = 'thin dark aluminum frames';
+  if (params.windows && params.windows.includes('ламинация')) {
+    frame = 'wood-grain laminated PVC frames';
+  } else if (params.windows && params.windows.includes('бел')) {
+    frame = 'white PVC frames';
+  }
+
+  return `
+approximately ${count} windows total, realistically distributed across visible facades,
+window sizes must match house type and floor count,
+glass with natural reflections of trees and sky, slight interior darkness,
+no impossible window placement, frames: ${frame}
+`;
+}
+
+function getDoorTemplate(params) {
+  let door = 'dark metal entrance door with realistic handle and simple trim';
+  if (params.door && params.door.includes('пластик')) {
+    door = 'white PVC entrance door with glazed insert';
+  } else if (params.door && params.door.includes('премиум')) {
+    door = 'premium dark metal or bronze-toned entrance door with higher-end detailing';
+  }
+
+  return `
+main entrance uses ${door}, residential scale, believable placement under canopy or near facade composition
+`;
+}
+
+function getTerraceTemplate(params) {
+  if (!params.terrace || params.terraceArea <= 0) {
+    return `
+no oversized terrace, only a modest entrance porch or minimal platform if needed
+`;
+  }
+
+  const base =
+    params.terraceType === 'закрытая'
+      ? `enclosed terrace approximately ${params.terraceArea} square meters with real glazing divisions and believable support structure`
+      : `open terrace approximately ${params.terraceArea} square meters with realistic decking boards and correct support geometry`;
+
+  const railing = params.terraceRailing > 0
+    ? `railing approximately ${params.terraceRailing} meters in visible length`
+    : `minimal or no railing depending on design`;
+
+  const steps = params.terraceSteps
+    ? `with realistic entrance steps sized for actual human use`
+    : `without exaggerated staircase`;
+
+  return `
+${base}, ${railing}, ${steps}, terrace must be proportional to the house and not dominate the composition
+`;
+}
+
+function getEnvironmentTemplate(style) {
+  return `
+house placed on a believable landscaped suburban plot in a forest-edge setting,
+mixed coniferous and deciduous trees in background,
+natural uneven lawn with subtle variation in color and height,
+ornamental shrubs placed asymmetrically,
+a few young trees and mature pines,
+concrete or stone path around the house with slight dirt near edges,
+soil transitions near foundation are realistic,
+no perfect catalog symmetry,
+no fantasy garden,
+no tropical plants,
+overall environment should look like a real high-quality finished plot in Russia or Northern Europe
+`;
+}
+
+function getLightingTemplate() {
+  return `
+soft natural late afternoon or golden-hour light,
+physically correct sun direction,
+realistic soft-edged shadows,
+subtle bounce light from ground and facade,
+facade wall lamps may be turned on with warm restrained glow,
+no overexposure,
+no dramatic cinematic fantasy lighting,
+looks like a professional exterior real-estate photo
+`;
+}
+
+function getCameraTemplate(view, floors) {
+  if (view === 'back') {
+    return `
+rear three-quarter view from eye level,
+camera distance enough to show the whole house,
+lens equivalent around 28mm to 35mm,
+verticals corrected,
+no exaggerated perspective distortion
+`;
+  }
+
+  let add = '';
+  if (floors === '1') {
+    add = 'camera should reinforce low horizontal bungalow proportions';
+  } else if (floors === '2') {
+    add = 'camera should clearly reveal both floors without ambiguity';
+  }
+
+  return `
+front three-quarter view from eye level,
+camera distance enough to show full facade and one side wall,
+lens equivalent around 28mm to 35mm,
+verticals corrected,
+no drone view,
+no top-down angle,
+${add}
+`;
+}
+
+function getQualityTemplate() {
+  return `
+ultra photorealistic architectural visualization,
+indistinguishable from real photography,
+physically based materials,
+micro imperfections,
+subtle construction tolerances,
+realistic drainage elements,
+realistic foundation plinth,
+real believable facade details,
+no cgi look,
+no cartoon,
+no concept art,
+no sketch,
+no glossy fake materials,
+no surreal proportions,
+no text,
+no watermark
+`;
+}
+
+function getSpecialScenarioTemplate(params) {
+  const key = `${params.floors}|${params.style}|${params.roofMaterial}`;
+
+  const scenarios = {
+    '1|Барнхаус|Профнастил': `
+single-story modern barnhouse with low elongated volume,
+dark corrugated metal exterior or corrugated metal roof,
+minimalistic composition,
+strictly one level only,
+real buildable proportions similar to premium modular or frame countryside houses
+`,
+    '1|Барнхаус|Металлочерепица': `
+single-story barnhouse-inspired house with simpler rural character,
+gable roof with metal tile,
+elongated low body,
+strictly one story,
+practical frame-house proportions
+`,
+    '1|Современный|Фальц': `
+single-story contemporary house with premium restrained appearance,
+standing seam roof, large but believable windows,
+clean geometry without turning into flat-roof villa
+`,
+    '2|Классический|Металлочерепица': `
+two-story family house with traditional suburban appearance,
+metal tile roof, balanced facade rhythm, believable Russian cottage settlement style
+`
+  };
+
+  return scenarios[key] || '';
+}
+
+function buildHousePrompt(params, view = 'front') {
+  const p = normalizeParams(params);
+  const footprint = getFootprint(p.area, p.floors);
+  const floorRules = getFloorRules(p.floors);
+
+  const sections = [
+    `Create an ultra-photorealistic exterior image of a real built private house, not a concept render.`,
+
+    `ARCHITECTURAL TYPE:
+${getSpecialScenarioTemplate(p)}
+${getStyleTemplate(p.style, p.floors)}
+${footprint.text}
+${getFloorRules(p.floors).positive}
+`,
+
+    `STRICT NEGATIVE CONSTRAINTS:
+${floorRules.negative}
+do not invent extra balconies,
+do not invent extra annexes,
+do not add extra wings not implied by the footprint,
+do not add additional floors hidden inside roof unless explicitly required
+`,
+
+    `ROOF:
+${getRoofTypeTemplate(p.roofType, p.floors)}
+${getRoofMaterialTemplate(p.roofMaterial)}
+`,
+
+    `FACADE AND OPENINGS:
+${getFacadeTemplate(p.facade, p.style)}
+${getWindowsTemplate(p)}
+${getDoorTemplate(p)}
+${getTerraceTemplate(p)}
+`,
+
+    `SITE AND LANDSCAPE:
+${getEnvironmentTemplate(p.style)}
+`,
+
+    `LIGHTING:
+${getLightingTemplate()}
+`,
+
+    `CAMERA:
+${getCameraTemplate(view, p.floors)}
+`,
+
+    `QUALITY:
+${getQualityTemplate()}
+`,
+
+    `The image must look like a premium real-estate photo of an actually constructed house.`
+  ];
+
+  let prompt = sections.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+
+  if (prompt.length > 3800) {
+    prompt = prompt.slice(0, 3780) + '\n\nultra realistic real house exterior photo.';
+  }
 
   return prompt;
 }
@@ -176,25 +488,19 @@ async function generateHouseRenders(params) {
   const frontPrompt = buildHousePrompt(params, 'front');
   const backPrompt = buildHousePrompt(params, 'back');
 
-  console.log('=== DALL-E v4.0 FRONT ===');
-  console.log(frontPrompt);
-  console.log(`Length: ${frontPrompt.length} chars`);
-  console.log('=== DALL-E v4.0 BACK ===');
-  console.log(backPrompt);
-  console.log(`Length: ${backPrompt.length} chars`);
+  console.log('=== FRONT PROMPT ===\n', frontPrompt);
+  console.log('=== BACK PROMPT ===\n', backPrompt);
 
-  const [frontUrl, backUrl] = await Promise.all([generateImage(frontPrompt), generateImage(backPrompt)]);
-  const [frontBuf, backBuf] = await Promise.all([downloadFile(frontUrl), downloadFile(backUrl)]);
+  const [frontUrl, backUrl] = await Promise.all([
+    generateImage(frontPrompt),
+    generateImage(backPrompt)
+  ]);
 
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const frontPath = path.join(os.tmpdir(), `render_front_${Date.now()}.png`);
-  const backPath = path.join(os.tmpdir(), `render_back_${Date.now()}.png`);
-  fs.writeFileSync(frontPath, frontBuf);
-  fs.writeFileSync(backPath, backBuf);
-
-  return { frontPath, backPath };
+  return { frontUrl, backUrl, frontPrompt, backPrompt };
 }
 
-module.exports = { chat, generateImage, downloadFile, transcribeVoice, generateHouseRenders, buildHousePrompt };
+module.exports = {
+  buildHousePrompt,
+  generateHouseRenders,
+  generateImage
+};
