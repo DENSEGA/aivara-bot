@@ -4,7 +4,7 @@ const https = require('https');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 async function chat(messages) {
-  const r = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages, max_tokens: 2000, temperature: 0.7 });
+  const r = await openai.chat.completions.create({ model: 'model: 'gpt-5.2', messages, max_tokens: 2000, temperature: 0.7 });
   return r.choices[0].message.content;
 }
 
