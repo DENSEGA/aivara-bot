@@ -69,13 +69,14 @@ function logOpenAIError(prefix, err) {
     type: err?.type,
     request_id: err?.request_id
   });
+
   if (err?.stack) {
     console.error(err.stack.split('\n').slice(0, 8).join('\n'));
   }
 }
 
 // ============================================================
-// BASIC COMPAT FUNCTIONS
+// BASIC COMPAT
 // ============================================================
 
 async function chat(messages) {
@@ -85,6 +86,7 @@ async function chat(messages) {
     max_tokens: 2000,
     temperature: 0.7
   });
+
   return r.choices?.[0]?.message?.content || '';
 }
 
@@ -117,14 +119,15 @@ async function transcribeVoice(fileBuffer) {
   return r.text || '';
 }
 
-// Оставляем для совместимости, если где-то ещё вызывается text-to-image
+// Оставляем для совместимости со старым кодом,
+// если где-то ещё вызывается обычная генерация по тексту.
 async function generateImage(prompt) {
   try {
-    const p = truncatePrompt(String(prompt || ''), 3800);
+    const safePrompt = truncatePrompt(String(prompt || ''), 3800);
 
     const r = await openai.images.generate({
       model: 'dall-e-3',
-      prompt: p,
+      prompt: safePrompt,
       n: 1,
       size: '1792x1024'
     });
@@ -201,13 +204,13 @@ function getReferencePath(params = {}) {
 
 const FACADE_EDIT = {
   'Металлический сайдинг / софиты':
-    'металлический фасад, сайдинг/софиты, реалистичная фактура металла',
+    'металлический фасад, сайдинг и софиты, реалистичная фактура металла',
   'Имитация бруса':
-    'фасад из имитации бруса, натуральная текстура древесины',
+    'фасад из имитации бруса, натуральная текстура дерева',
   'Штукатурка (мокрый фасад)':
     'штукатурный фасад, светлая минеральная фактура',
   'Фасадная плитка Hauberk':
-    'фасадная плитка Hauberk, кирпичный ритм плитки',
+    'фасадная плитка Hauberk, ритм кирпичной кладки',
   'Комбинация: металл + дерево':
     'комбинированный фасад: тёмный металл и тёплые деревянные акценты',
   'Комбинация: металл + штукатурка':
@@ -287,7 +290,6 @@ function buildHouseEditPrompt(params = {}) {
 - удалять окна
 - менять архитектуру
 - менять форму кровли
-- менять форму дома
 
 МОЖНО ИЗМЕНИТЬ ТОЛЬКО:
 1. фасад -> ${facade}${facadeColor}
@@ -309,7 +311,6 @@ function buildHouseEditPrompt(params = {}) {
   return truncatePrompt(prompt, 3800);
 }
 
-// Для совместимости со старым импортом
 const buildHousePrompt = buildHouseEditPrompt;
 
 // ============================================================
@@ -329,14 +330,12 @@ async function editHouseFromReference(params = {}) {
     const prompt = buildHouseEditPrompt(params);
 
     const mainModel = process.env.OPENAI_MAIN_MODEL || 'gpt-4o-mini';
-    const imageModel = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
 
     console.log('=== AIVARA HOUSE EDIT ===');
     console.log('HOUSES_DIR:', HOUSES_DIR);
     console.log('REFERENCE:', referencePath);
     console.log('TEMP_DIR:', TEMP_DIR);
     console.log('MAIN_MODEL:', mainModel);
-    console.log('IMAGE_MODEL:', imageModel);
     console.log('PROMPT_LEN:', prompt.length);
 
     const response = await openai.responses.create({
@@ -354,11 +353,7 @@ async function editHouseFromReference(params = {}) {
         {
           type: 'image_generation',
           action: 'edit',
-          model: imageModel,
-          size: '1536x1024',
-          quality: 'high',
-          background: 'auto',
-          output_format: 'png'
+          size: '1536x1024'
         }
       ],
       tool_choice: { type: 'image_generation' }
